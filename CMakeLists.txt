@@ -203,12 +203,12 @@ execute_process(
 # Set Version
 set(EMULATOR_VERSION_MAJOR "0")
 set(EMULATOR_VERSION_MINOR "8")
-set(EMULATOR_VERSION_PATCH "0")
+set(EMULATOR_VERSION_PATCH "1")
 
 set_source_files_properties(src/shadps4.rc PROPERTIES COMPILE_DEFINITIONS "EMULATOR_VERSION_MAJOR=${EMULATOR_VERSION_MAJOR};EMULATOR_VERSION_MINOR=${EMULATOR_VERSION_MINOR};EMULATOR_VERSION_PATCH=${EMULATOR_VERSION_PATCH}")
 
-set(APP_VERSION "${EMULATOR_VERSION_MAJOR}.${EMULATOR_VERSION_MINOR}.${EMULATOR_VERSION_PATCH}")
-set(APP_IS_RELEASE true)
+set(APP_VERSION "${EMULATOR_VERSION_MAJOR}.${EMULATOR_VERSION_MINOR}.${EMULATOR_VERSION_PATCH} WIP")
+set(APP_IS_RELEASE false)
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/common/scm_rev.cpp.in" "${CMAKE_CURRENT_BINARY_DIR}/src/common/scm_rev.cpp" @ONLY)
 
 message("end git things, remote: ${GIT_REMOTE_NAME}, branch: ${GIT_BRANCH}")
@@ -375,11 +375,19 @@ set(NETWORK_LIBS src/core/libraries/network/http.cpp
                  src/core/libraries/network/net_ctl_obj.cpp
                  src/core/libraries/network/net_ctl_obj.h
                  src/core/libraries/network/net_ctl_codes.h
+                 src/core/libraries/network/net_util.cpp
+                 src/core/libraries/network/net_util.h
+                 src/core/libraries/network/net_error.h
                  src/core/libraries/network/net.h
                  src/core/libraries/network/ssl.cpp
                  src/core/libraries/network/ssl.h
                  src/core/libraries/network/ssl2.cpp
                  src/core/libraries/network/ssl2.h
+                 src/core/libraries/network/sys_net.cpp
+                 src/core/libraries/network/sys_net.h
+                 src/core/libraries/network/posix_sockets.cpp
+                 src/core/libraries/network/p2p_sockets.cpp
+                 src/core/libraries/network/sockets.h
 )
 
 set(AVPLAYER_LIB src/core/libraries/avplayer/avplayer_common.cpp
@@ -851,6 +859,7 @@ set(SHADER_RECOMPILER src/shader_recompiler/exception.h
                       src/shader_recompiler/ir/passes/identity_removal_pass.cpp
                       src/shader_recompiler/ir/passes/ir_passes.h
                       src/shader_recompiler/ir/passes/lower_buffer_format_to_raw.cpp
+                      src/shader_recompiler/ir/passes/lower_fp64_to_fp32.cpp
                       src/shader_recompiler/ir/passes/readlane_elimination_pass.cpp
                       src/shader_recompiler/ir/passes/resource_tracking_pass.cpp
                       src/shader_recompiler/ir/passes/ring_access_elimination.cpp
@@ -1100,33 +1109,31 @@ endif()
 
 if (APPLE)
     # Include MoltenVK, along with an ICD file so it can be found by the system Vulkan loader if used for loading layers.
-    set(MVK_DYLIB_SRC ${CMAKE_CURRENT_BINARY_DIR}/externals/MoltenVK/libMoltenVK.dylib)
-
     if (ENABLE_QT_GUI)
-        set_property(TARGET shadps4 APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
-        set(MVK_ICD_DST ${CMAKE_CURRENT_BINARY_DIR}/shadps4.app/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json)
-        set(MVK_DYLIB_DST ${CMAKE_CURRENT_BINARY_DIR}/shadps4.app/Contents/Frameworks/libMoltenVK.dylib)
-        set(MVK_DYLIB_ICD_PATH "../../../Frameworks/libMoltenVK.dylib")
+        set(MVK_BUNDLE_PATH "Resources/vulkan/icd.d")
+        set_property(TARGET shadps4 APPEND PROPERTY BUILD_RPATH "@executable_path/../${MVK_BUNDLE_PATH}")
+        set(MVK_DST ${CMAKE_CURRENT_BINARY_DIR}/shadps4.app/Contents/${MVK_BUNDLE_PATH})
     else()
         set_property(TARGET shadps4 APPEND PROPERTY BUILD_RPATH "@executable_path")
-        set(MVK_ICD_DST ${CMAKE_CURRENT_BINARY_DIR}/MoltenVK_icd.json)
-        set(MVK_DYLIB_DST ${CMAKE_CURRENT_BINARY_DIR}/libMoltenVK.dylib)
-        set(MVK_DYLIB_ICD_PATH "./libMoltenVK.dylib")
+        set(MVK_DST ${CMAKE_CURRENT_BINARY_DIR})
     endif()
 
-    cmake_path(GET MVK_ICD_DST PARENT_PATH MVK_ICD_DST_PARENT)
-    cmake_path(GET MVK_DYLIB_DST PARENT_PATH MVK_DYLIB_DST_PARENT)
+    set(MVK_DYLIB_SRC ${CMAKE_CURRENT_BINARY_DIR}/externals/MoltenVK/libMoltenVK.dylib)
+    set(MVK_DYLIB_DST ${MVK_DST}/libMoltenVK.dylib)
+    set(MVK_ICD_SRC ${CMAKE_CURRENT_SOURCE_DIR}/externals/MoltenVK/MoltenVK/MoltenVK/icd/MoltenVK_icd.json)
+    set(MVK_ICD_DST ${MVK_DST}/MoltenVK_icd.json)
 
-    set(MVK_ICD "\\\{ \\\"file_format_version\\\": \\\"1.0.0\\\", \\\"ICD\\\": \\\{ \\\"library_path\\\": \\\"${MVK_DYLIB_ICD_PATH}\\\", \\\"api_version\\\": \\\"1.2.0\\\", \\\"is_portability_driver\\\": true \\\} \\\}")
+    add_custom_command(
+        OUTPUT ${MVK_DST}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${MVK_DST})
     add_custom_command(
         OUTPUT ${MVK_ICD_DST}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${MVK_ICD_DST_PARENT} && ${CMAKE_COMMAND} -E echo ${MVK_ICD} > ${MVK_ICD_DST})
-
+        DEPENDS ${MVK_ICD_SRC} ${MVK_DST}
+        COMMAND ${CMAKE_COMMAND} -E copy ${MVK_ICD_SRC} ${MVK_ICD_DST})
     add_custom_command(
         OUTPUT ${MVK_DYLIB_DST}
-        DEPENDS ${MVK_DYLIB_SRC}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${MVK_DYLIB_DST_PARENT} && ${CMAKE_COMMAND} -E copy ${MVK_DYLIB_SRC} ${MVK_DYLIB_DST})
-
+        DEPENDS ${MVK_DYLIB_SRC} ${MVK_DST}
+        COMMAND ${CMAKE_COMMAND} -E copy ${MVK_DYLIB_SRC} ${MVK_DYLIB_DST})
     add_custom_target(CopyMoltenVK DEPENDS ${MVK_ICD_DST} ${MVK_DYLIB_DST})
     add_dependencies(CopyMoltenVK MoltenVK)
     add_dependencies(shadps4 CopyMoltenVK)
